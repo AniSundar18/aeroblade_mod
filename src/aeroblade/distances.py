@@ -2,7 +2,7 @@ import abc
 import warnings
 from pathlib import Path
 from typing import Any, Optional
-
+from aeroblade.models import get_model
 import lpips
 import pyiqa
 import torch
@@ -10,11 +10,22 @@ import torch.nn.functional as F
 from joblib.memory import Memory
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-
+from PIL import Image
 from aeroblade.data import ImageFolder
 from aeroblade.misc import device
+import torchvision.transforms as transforms
 
 mem = Memory(location="cache", compress=("lz4", 9), verbose=0)
+
+MEAN = {
+    "imagenet":[0.485, 0.456, 0.406],
+    "clip":[0.48145466, 0.4578275, 0.40821073]
+}
+
+STD = {
+    "imagenet":[0.229, 0.224, 0.225],
+    "clip":[0.26862954, 0.26130258, 0.27577711]
+}
 
 def normalize_filenames(filenames):
     return [filename.rsplit('.', 1)[0] for filename in filenames]
@@ -22,8 +33,6 @@ def normalize_filenames(filenames):
 def lists_have_same_elements(list1, list2):
     normalized_list1 = normalize_filenames(list1)
     normalized_list2 = normalize_filenames(list2)
-    print(normalized_list1)
-    print(normalized_list2)
     return set(normalized_list1) == set(normalized_list2)
 
 class Distance(abc.ABC):
@@ -34,32 +43,24 @@ class Distance(abc.ABC):
         self,
         ds_a: ImageFolder,
         ds_b: ImageFolder,
-        retSpat: bool
     ) -> tuple[dict[str, torch.Tensor], list[str]]:
         """
         Compute distance between two datasets with matching filenames.
         """
+        
         files_a = [Path(f).name for f in ds_a.img_paths]
         files_b = [Path(f).name for f in ds_b.img_paths]
         if not lists_have_same_elements(files_b, files_a):#files_a != files_b:
             raise ValueError("ds_a and ds_b should contain matching files.")
 
-        if retSpat:
-            result, diffs = self._compute(
-                ds_a=ds_a,
-                ds_b=ds_b,
-                retSpat=retSpat
-            )
-            return self._postprocess(result), files_a, diffs
-        else:
-            result = self._compute(
-                ds_a=ds_a,
-                ds_b=ds_b,
-                retSpat=retSpat
-            )
-            return self._postprocess(result), files_a
+        result = self._compute(
+            ds_a=ds_a,
+            ds_b=ds_b,
+        )
+        return self._postprocess(result), files_a
+
     @abc.abstractmethod
-    def _compute(self, ds_a: ImageFolder, ds_b: ImageFolder, retSpat: bool) -> Any:
+    def _compute(self, ds_a: ImageFolder, ds_b: ImageFolder) -> Any:
         """Distance-specific computation."""
         pass
 
@@ -69,10 +70,11 @@ class Distance(abc.ABC):
         pass
 
 
+
 class _PatchedLPIPS(lpips.LPIPS):
     """Patched version of LPIPS which returns layer-wise output without upsampling."""
 
-    def forward(self, in0, in1, retPerLayer=False, normalize=False, retSpat=False):
+    def forward(self, in0, in1, retPerLayer=False, normalize=False,get_diffs=False, layer=None):
         if (
             normalize
         ):  # turn on this flag if input is [0,1] so it can be adjusted to [-1, +1]
@@ -86,15 +88,22 @@ class _PatchedLPIPS(lpips.LPIPS):
             else (in0, in1)
         )
         outs0, outs1 = self.net.forward(in0_input), self.net.forward(in1_input)
+        
         feats0, feats1, diffs = {}, {}, {}
-
+        if layer is not None and get_diffs:
+            kk = layer
+            feats0, feats1 = (
+                lpips.normalize_tensor(outs0[kk]),
+                lpips.normalize_tensor(outs1[kk]),
+            )
+            diffs = feats0 - feats1
+            return diffs
         for kk in range(self.L):
             feats0[kk], feats1[kk] = (
                 lpips.normalize_tensor(outs0[kk]),
                 lpips.normalize_tensor(outs1[kk]),
             )
             diffs[kk] = (feats0[kk] - feats1[kk]) ** 2
-        
         if self.lpips:
             if self.spatial:
                 res_no_up = [self.lins[kk](diffs[kk]) for kk in range(self.L)]
@@ -127,32 +136,23 @@ class _PatchedLPIPS(lpips.LPIPS):
         val = 0
         for layer in range(self.L):
             val += res[layer]
-
-        if retPerLayer:
-            if retSpat:
-                return (val, res_no_up), diffs
-            else:
-                return (val, res_no_up)
+        if get_diffs:
+            return diffs
+        elif retPerLayer:
+            return (val, res_no_up)
         else:
-            if retSpat:
-                return val, diffs
-            else:
-                return val
+            return val
 
 
-@mem.cache(ignore=["batch_size", "num_workers"])
 def _compute_lpips(
     ds_a: ImageFolder,
     ds_b: ImageFolder,
     model_kwargs: dict,
     batch_size: int,
     num_workers: int,
-    retSpat=False
 ):
-    diffs=[]
     dl_a = DataLoader(dataset=ds_a, batch_size=batch_size, num_workers=num_workers // 2)
     dl_b = DataLoader(dataset=ds_b, batch_size=batch_size, num_workers=num_workers // 2)
-
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         model = _PatchedLPIPS(spatial=True, **model_kwargs).to(device())
@@ -165,26 +165,12 @@ def _compute_lpips(
         desc="Computing LPIPS",
         total=len(dl_a),
     ):
-        if retSpat:
-            batch, diff = model(
-                                    tensor_a.to(device()),
-                                    tensor_b.to(device()),
-                                    retPerLayer=True,
-                                    normalize=True,
-                                    retSpat=retSpat
-                                )
-            for key in diff.keys():
-                diff[key] = diff[key].to('cpu')
-            diffs.append(diff)
-            sum_batch = batch[0]
-            layers_batch = batch[1]
-        else:
-            sum_batch, layers_batch = model(
-                                            tensor_a.to(device()),
-                                            tensor_b.to(device()),
-                                            retPerLayer=True,
-                                            normalize=True,
-                                            )
+        sum_batch, layers_batch = model(
+            tensor_a.to(device()),
+            tensor_b.to(device()),
+            retPerLayer=True,
+            normalize=True,
+        )
         lpips_layers[0].append(sum_batch.to(device="cpu", dtype=torch.float16))
         for i, layer_result in enumerate(layers_batch):
             lpips_layers[i + 1].append(
@@ -192,19 +178,8 @@ def _compute_lpips(
             )
 
     lpips_layers = [torch.cat(lpips_layer) for lpips_layer in lpips_layers]
-    
-    if retSpat and len(diffs)>0:
-        t_diffs = {}
-        for bidx, batch in enumerate(diffs):
-            for key in diffs[bidx].keys():
-                if key not in t_diffs.keys():
-                    t_diffs[key] = []
-                t_diffs[key].append(diffs[bidx][key])
-        for key in t_diffs.keys():
-            t_diffs[key] = torch.cat(t_diffs[key], dim=0).to('cpu')
-        return lpips_layers, t_diffs
-    else:
-        return lpips_layers
+    return lpips_layers
+
 
 class LPIPS(Distance):
     """From Zhang et al., The Unreasonable Effectiveness of Deep Features as a Perceptual Metric, 2018"""
@@ -218,6 +193,8 @@ class LPIPS(Distance):
         concat_layers_and_flatten: bool = False,
         batch_size: int = 1,
         num_workers: int = 0,
+        get_diff=False,
+        rank=None,
     ) -> None:
         """
         net: backbone to use from ['alex', 'vgg', 'squeeze']
@@ -232,8 +209,14 @@ class LPIPS(Distance):
         self.concat_layers_and_flatten = concat_layers_and_flatten
         self.batch_size = batch_size
         self.num_workers = num_workers
-
-    def _compute(self, ds_a: ImageFolder, ds_b: ImageFolder, retSpat=False) -> list[torch.Tensor]:
+        self.get_diff = get_diff
+        if self.get_diff:
+            model_kwargs={"net": self.net}
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.model = _PatchedLPIPS(spatial=True, **model_kwargs).to(rank)
+    
+    def _compute(self, ds_a: ImageFolder, ds_b: ImageFolder) -> list[torch.Tensor]:
         """Use pure function to enable caching."""
         return _compute_lpips(
             ds_a=ds_a,
@@ -241,7 +224,6 @@ class LPIPS(Distance):
             model_kwargs={"net": self.net},
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            retSpat=retSpat
         )
 
     def _postprocess(self, result: list[torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -277,6 +259,17 @@ class LPIPS(Distance):
             }
 
         return out
+
+    def diff(self, tensor_a, tensor_b, use_cat=False, rez=512)-> list[torch.Tensor]:
+        diffs = self.model(
+            tensor_a,
+            tensor_b,
+            retPerLayer=True,
+            normalize=True,
+            get_diffs=True,
+            layer = self.layer
+        )
+        return diffs
 
 
 @mem.cache(ignore=["batch_size", "num_workers"])
@@ -340,9 +333,12 @@ def distance_from_config(
     config: str,
     batch_size: int = 1,
     num_workers: int = 1,
+    spatial=False,
+    projection_layer=None,
     **kwargs,
 ) -> Distance:
     """Parse config string and return matching distance."""
+    print(config)
     if config.startswith("lpips"):
         _, net, layer = config.split("_")
         distance = LPIPS(
@@ -350,6 +346,17 @@ def distance_from_config(
             layer=int(layer),
             batch_size=batch_size,
             num_workers=num_workers,
+            **kwargs,
+        )
+    elif config.startswith("CLIP"):
+        net, layer = config.split("_")
+        distance = CLIP(
+            net=net,
+            layer=int(layer),
+            spatial=spatial,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            projection_layer=projection_layer,
             **kwargs,
         )
     else:
@@ -360,3 +367,147 @@ def distance_from_config(
             **kwargs,
         )
     return distance
+
+
+
+def _compute_clip(
+    ds_a: ImageFolder,
+    ds_b: ImageFolder,
+    spatial: bool,
+    net: str,
+    layer: str,
+    model_kwargs: dict,
+    batch_size: int,
+    num_workers: int,
+    projection_layer=None
+    ):
+    transform = transforms.Compose([
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize( mean=MEAN['clip'], std=STD['clip'] ),
+        ])
+    ds_a.transform = transform
+    ds_b.transform = transform
+    dl_a = DataLoader(dataset=ds_a, batch_size=batch_size, num_workers=num_workers // 2)
+    dl_b = DataLoader(dataset=ds_b, batch_size=batch_size, num_workers=num_workers // 2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model = get_model(net, layer=layer, spatial=spatial)
+
+    #torch.compile(model)
+
+    lpips_layers = []
+    distances = {} 
+    for (tensor_a, _), (tensor_b, _) in tqdm(
+        zip(dl_a, dl_b),
+        desc="Computing CLIP",
+        total=len(dl_a),
+    ):
+        rep_a = model(tensor_a)
+        rep_b = model(tensor_b)
+        for key in rep_a.keys():
+            if not spatial or key in ['before_projection', 'after_projection']:
+                diff = rep_a[key] - rep_b[key]
+                if projection_layer is not None:
+                    if key == 'layer'+str(layer):
+                        diff = projection_layer(diff.to('cuda')).to('cpu')
+                dist = -torch.norm(diff, dim=1, keepdim=True)
+            else:
+                diff = rep_a[key] - rep_b[key] # P x N * Dim
+                dists = torch.norm(diff, dim=-1, keepdim=True)
+                dist = -torch.mean(dists, dim=0)
+            if key not in distances:
+                distances[key] = dist
+            else:
+                distances[key] = torch.cat((distances[key], dist))
+    multi_level_dist = []
+    for key in distances.keys():
+        multi_level_dist.append(distances[key])
+    multi_level_dist = torch.stack(multi_level_dist, dim=1)
+    distances['all_avg'] = torch.mean(multi_level_dist, dim=1)
+
+    return distances
+
+
+class CLIP(Distance):
+
+    def __init__(
+        self,
+        net: str = "CLIP:ViT-L/14",
+        layer: int = 10,
+        spatial: bool = False,
+        output_size: Optional[int] = None,
+        concat_layers_and_flatten: bool = False,
+        batch_size: int = 1,
+        num_workers: int = 0,
+        get_diff=False,
+        rank=None,
+        projection_layer=None
+    ) -> None:
+        """
+        net: CLIP model being used
+        layer: layer to return, -1 returns all layers
+        spatial: whether to return scores for each patch, can compute distance based on either class token or patch wise
+        output_size: resize output to this size (only applicable if spatial=True)
+        """
+        self.net = net
+        self.layer = layer
+        self.spatial = spatial
+        self.output_size = output_size
+        self.concat_layers_and_flatten = concat_layers_and_flatten
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.projection_layer = projection_layer
+        if projection_layer is not None:
+            self.projection_layer = self.projection_layer.to('cuda')
+        if get_diff:
+            self.model = get_model(net, layer=layer, spatial=spatial).to(rank)
+
+    def get_diff(self, tensor_a, tensor_b, use_cat=False, rez=512) -> list[torch.Tensor]:
+        """Use pure function to enable caching."""
+        transform = transforms.Compose([
+            transforms.ToPILImage(),
+            #transforms.Resize((rez, rez), interpolation=Image.BICUBIC),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize( mean=MEAN['clip'], std=STD['clip'] ),
+        ])
+        tf_a = []
+        tf_b = []
+        for idx in range(len(tensor_a)):
+            tf_a.append(transform(tensor_a[idx]))
+            tf_b.append(transform(tensor_b[idx]))
+        tf_a = torch.stack(tf_a)
+        tf_b = torch.stack(tf_b)
+        rep_a = self.model(tf_a.to('cuda'))
+        rep_b = self.model(tf_b.to('cuda'))
+        layer_name = 'layer' + str(self.layer)
+        if use_cat:
+            return torch.cat((rep_a[layer_name],rep_b[layer_name]), dim=-1)
+        else:
+            return rep_a[layer_name] - rep_b[layer_name]
+
+
+    def _compute(self, ds_a: ImageFolder, ds_b: ImageFolder) -> list[torch.Tensor]:
+        """Use pure function to enable caching."""
+        return _compute_clip(
+            ds_a=ds_a,
+            ds_b=ds_b,
+            spatial=self.spatial,
+            model_kwargs={"net": self.net},
+            net = self.net,
+            layer = self.layer,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            projection_layer = self.projection_layer
+        )
+
+    def _postprocess(self, result: dict) -> dict[str, torch.Tensor]:
+        """Handle layer selection and resizing."""
+        out = {}
+        for key in result:
+            if self.layer != -1 and key != 'layer'+str(self.layer):
+                continue
+            N = result[key].size(0)  # Dynamically get the size of the first dimension
+            out[key] = result[key].view(N, 1, 1, 1)
+        return out

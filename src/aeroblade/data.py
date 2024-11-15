@@ -1,3 +1,4 @@
+import pdb
 from pathlib import Path
 from typing import Callable, Optional, Tuple, Union
 import os
@@ -6,7 +7,7 @@ import torch
 import torchvision.transforms.v2 as tf
 from PIL import Image
 from torchvision.datasets import VisionDataset
-
+#pdb.set_trace()
 IMG_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"]
 
 
@@ -37,12 +38,12 @@ class ImageFolder(VisionDataset):
                             self.amount is not None
                             and len(self.img_paths) == self.amount
                         ):
-                            print('HIHIHIHI')
                             break
             else:
                 self.img_paths.append(path)
         if self.amount is not None and len(self.img_paths) < self.amount:
             raise ValueError("Number of images is less than 'amount'.")
+        self.img_paths = sorted(self.img_paths, key=lambda p: p.name)
 
     def __len__(self) -> int:
         return len(self.img_paths)
@@ -63,21 +64,13 @@ class ImageFolder(VisionDataset):
         return "\n".join(lines)
 
 def get_all_files(directory_path, amount=800):
-    # Initialize an empty list to store file paths
     file_paths = []
 
-    # Walk through the directory
     for root, dirs, files in os.walk(directory_path):
         for file in files:
-        # Construct the full file path
             full_path = os.path.join(root, file)
-        # Append the file path to the list
             file_paths.append(Path(full_path))
-    #random.shuffle(file_paths)
-    #return file_paths
-    pths = sorted(file_paths)
-    #Filth please remove whenever
-    return pths
+    return sorted(file_paths)
                                                                                     
 
 

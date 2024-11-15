@@ -1,5 +1,4 @@
 from pathlib import Path
-from pytorch_msssim import ssim, ms_ssim, SSIM, MS_SSIM
 import torch.optim as optim
 import lpips
 from typing import Optional
@@ -45,6 +44,7 @@ def compute_reconstructions(
         print("Ignoring output_root since output_dir is specified.")
 
     arg_dict = {"ds": ds, "repo_id": repo_id, "output_root": output_root, "seed": seed}
+    print('HASH:', hash(arg_dict))
     if output_dir is None:
         # create output directory based on hashed arguments if not specified
         output_dir = output_root / hash(arg_dict) / str(iterations)
@@ -58,6 +58,7 @@ def compute_reconstructions(
 
         # if more than one iteration, recursively load previous iterations
         if iterations > 1:
+            print('Iteration: ', iterations)
             previous_paths = compute_reconstructions(
                 ds=ds,
                 repo_id=repo_id,
@@ -186,7 +187,7 @@ def ssim_loss(X, Y):
     return ssim_loss
 
 
-def optimize_latents(ae, latents, images, decode_dtype, iterations=150, lr=0.1, count_limit=50, buffer_size=10):
+def optimize_latents(ae, latents, images, decode_dtype, iterations=1000, lr=0.1, count_limit=50, buffer_size=10):
     delta = torch.zeros_like(latents).to('cuda')
     past_losses = []
     count = 0

@@ -7,7 +7,8 @@ import pandas as pd
 import torch
 import torchvision.transforms.v2 as tf
 from tqdm import tqdm
-
+from aeroblade.networks import MLP
+from aeroblade.utils import RandomAugment
 from aeroblade.complexities import complexity_from_config
 from aeroblade.data import ImageFolder, read_files
 from aeroblade.distances import distance_from_config
@@ -182,12 +183,15 @@ def compute_distances(
     batch_size: int,
     num_workers: int,
     compute_max: bool = True,
+    spatial: bool = False,
     vae_path=None,
     do_over = True,
     optimize = False,
     scale=1.0,
     post_transform=False,
     save_spat_dist=None,
+    iterations=1,
+    checkpoint=None,
     **distance_kwargs,
 ) -> pd.DataFrame:
     """Compute distances between original and reconstructed images."""
@@ -197,6 +201,11 @@ def compute_distances(
         total=len(transforms) * len(dirs) * len(repo_ids) * len(distance_metrics),
     )
     #amount=1000
+    if checkpoint is not None:
+        projection_layer = MLP(1024, 1024).to('cuda')
+        projection_layer.load_state_dict(torch.load(checkpoint))
+    else:
+        projection_layer = None
     distances = []
 
     # iterate over transforms
@@ -216,8 +225,8 @@ def compute_distances(
             elif interp_style == 'recon_down':
                 #Setting where an image is downsampled first followed by upsizing 
                 resize = tf.Compose(
-                                    [tf.Resize((int(scale*size), int(scale*size)), interpolation=Image.BILINEAR),
-                                    tf.Resize((size, size), interpolation=Image.BILINEAR)]
+                                    [tf.Resize((int(scale*size), int(scale*size)), interpolation=Image.BICUBIC),
+                                    tf.Resize((size, size), interpolation=Image.BICUBIC)]
                         )
 
             transform = tf.Compose(
@@ -227,6 +236,8 @@ def compute_distances(
                     tf.ToDtype(torch.float32, scale=True),
                 ]
             )
+        elif 'random' in transform_config:
+            transform = RandomAugment()
         elif transform_config != "clean":
             transform = tf.Compose(
                 [
@@ -259,45 +270,28 @@ def compute_distances(
                     num_workers=num_workers,
                     vae_path=vae_path,
                     do_over = do_over,
-                    optimize = optimize
+                    optimize = optimize,
+                    iterations = iterations
                     )
                 if post_transform:
                     ds_rec = ImageFolder(rec_paths, transform = transform)
                 else:
-                    ds_rec = ImageFolder(rec_paths, amount=30)
+                    ds_rec = ImageFolder(rec_paths)
 
                 # iterate over distance metrics
-                if save_spat_dist is not None:
-                    retSpat=True
-                else:
-                    retSpat=False
                 for dist_metric in distance_metrics:
                     
                     dist_dict, files = distance_from_config(
                                                             dist_metric,
                                                             batch_size=batch_size,
                                                             num_workers=num_workers,
+                                                            spatial = spatial,
+                                                            projection_layer=projection_layer,
                                                             **distance_kwargs,
                                                         ).compute(
                                                                     ds_a=ds,
                                                                     ds_b=ds_rec,
-                                                                    retSpat=retSpat
                                                                 )
-                    for key in dist_dict.keys():
-                        print(key)
-                        for kdx in range(len(dist_dict[key])):
-                            print(dist_dict[key][kdx])
-                    if save_spat_dist is not None:
-                        if idx == 0:
-                            file_name = 'real_vgg' + '.pth'
-                        elif idx==1:
-                            file_name = 'fake_vgg' + '.pth'
-                        file_path = os.path.join(save_spat_dist, file_name)
-                        diff_tensor = {}
-                        for jdx in range(len(diffs)):
-                            print(diffs[jdx].shape)
-                            diff_tensor[jdx] = {files[i]: diffs[jdx][i] for i in range(len(files))}
-                        torch.save(diff_tensor, file_path)
                     for dist_name, dist_tensor in dist_dict.items():
                         if not distance_kwargs.get("spatial", False):
                             dist_tensor = dist_tensor.squeeze(1, 2, 3)

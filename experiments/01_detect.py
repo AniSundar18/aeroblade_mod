@@ -38,7 +38,10 @@ def main(args):
         optimize = args.optimize,
         scale = args.scale,
         post_transform = args.post_transform,
-        save_spat_dist = args.save_spat_dist
+        save_spat_dist = args.save_spat_dist,
+        iterations = args.iterations,
+        spatial=args.spatial,
+        checkpoint = args.checkpoint
         )
 
     if args.precomputed_real_dist is not None:
@@ -147,6 +150,9 @@ def parse_args():
     parser.add_argument(
     "--vae_path", type=str, default=None
     )
+    parser.add_argument(
+    "--checkpoint", type=str, default=None
+    )
     # autoencoder
     parser.add_argument(
         "--repo-ids",
@@ -171,6 +177,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--iterations", type=int, default=1)
+    parser.add_argument('--spatial', action='store_true', help='Use all patches for CLIP distance')
     parser.add_argument('--do_over', action='store_true', help='Compute reconstructions from scratch')
     parser.add_argument('--optimize', action='store_true', help='Optimize to find a better reconstruction')
     parser.add_argument("--scale", type=float, default=1.0)
