@@ -5,10 +5,11 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 import os
 from torch.utils.data import DataLoader
-os.chdir('/nobackup3/anirudh/aeroblade/trainer')
+import sys
+sys.path.append('/nobackup/anirudh/edit_repo/aeroblade_mod/trainer/distributed')
+sys.path.append('/nobackup/anirudh/edit_repo/aeroblade_mod/trainer')
 from models.networks import TransformerBlock, MLP, MLP_Classifier, old_MLP_Classifier, CNNHead, SelfAttentionBinaryClassification
 from utils import get_vae, get_clip, reconstruct, RandomAugment, get_lpips
-os.chdir('/nobackup3/anirudh/aeroblade/trainer/distributed')
 from diffusers import AutoencoderKL
 def cleanup():
     dist.destroy_process_group()

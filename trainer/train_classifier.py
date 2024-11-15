@@ -8,72 +8,70 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 import argparse
 from sklearn.metrics import average_precision_score
-os.chdir('/nobackup3/anirudh/aeroblade/src')
+# os.chdir('/nobackup/anirudh/edit_repo/aeroblade_mod/src')
+# from aeroblade.evaluation import tpr_at_max_fpr
+# from aeroblade.models import get_model
+# os.chdir('/nobackup/anirudh/edit_repo/aeroblade_mod/trainer')
+import sys
+sys.path.append('/nobackup/anirudh/edit_repo/aeroblade_mod/src')
+sys.path.append('/nobackup/anirudh/edit_repo/aeroblade_mod/trainer')
+
 from aeroblade.evaluation import tpr_at_max_fpr
 from aeroblade.models import get_model
-os.chdir('/nobackup3/anirudh/aeroblade/trainer')
 from dataset import ImageFolder
 from utils import get_vae, get_clip, reconstruct, RandomAugment, resize_batch, save_network
 from distributed.tools import setup, cleanup, prepare, get_wrapped_models
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-def validate(rank, opt, val_loaders, ae, encoder, projection_layer, epoch, tform=None):
+def validate(rank, opt, val_loader, ae, encoder, projection_layer, epoch, tform=None):
 
     to_pil = transforms.ToPILImage()
-    with torch.no_grad():
-        for idx, val_loader in enumerate(val_loaders):
-            if idx == 1:
-                break
-                print('-----------Normal-------------')
-            
-            real_loader = val_loader[0]
-            fake_loader = val_loader[1]
-            real_loader.sampler.set_epoch(0)
-            fake_loader.sampler.set_epoch(0)
-            y_score_real = []
-            y_score_fake = []
-            for step, (x_real, _) in enumerate(real_loader):
-                if opt.perturb:
-                    x_pil = [tform(to_pil(j)) for j in x_real]
-                    x_pil = torch.stack(x_pil)
-                    diff = encoder.get_diff(x_real.to(rank), x_pil.to(rank), rez=opt.pre_rez)
+    with torch.no_grad():            
+        real_loader = val_loader[0]
+        fake_loader = val_loader[1]
+        real_loader.sampler.set_epoch(0)
+        fake_loader.sampler.set_epoch(0)
+        y_score_real = []
+        y_score_fake = []
+        for step, (x_real, _) in enumerate(real_loader):
+            if opt.perturb:
+                x_pil = [tform(to_pil(j)) for j in x_real]
+                x_pil = torch.stack(x_pil)
+                diff = encoder.get_diff(x_real.to(rank), x_pil.to(rank), rez=opt.pre_rez)
+            else:
+                if 'lpips' in opt.distance_metrics:
+                    diff = encoder.diff(x_real.to(rank), reconstruct(x_real.to(rank), ae, seed=opt.seed), use_cat=opt.use_cat, rez=opt.pre_rez)
                 else:
-                    if 'lpips' in opt.distance_metrics:
-                        diff = encoder.diff(x_real.to(rank), reconstruct(x_real.to(rank), ae, seed=opt.seed), use_cat=opt.use_cat, rez=opt.pre_rez)
-                    else:
-                        diff = encoder.get_diff(x_real.to(rank), reconstruct(x_real.to(rank), ae, seed=opt.seed), use_cat=opt.use_cat, rez=opt.pre_rez)
-                if opt.use_distance:
-                    norms = torch.norm(diff, dim=1, keepdim=True)
-                    diff = torch.cat((diff, norms), dim=1)
-                preds = projection_layer(diff)
-                y_score_real.append(preds)
-            y_score_real = torch.flatten(torch.stack(y_score_real))
-            for step, (x_fake, _) in enumerate(fake_loader):
-                if opt.perturb:
-                    x_pil = [tform(to_pil(j)) for j in x_fake]
-                    x_pil = torch.stack(x_pil)
-                    diff = encoder.get_diff(x_fake.to(rank), x_pil.to(rank), rez=opt.pre_rez)
+                    diff = encoder.get_diff(x_real.to(rank), reconstruct(x_real.to(rank), ae, seed=opt.seed), use_cat=opt.use_cat, rez=opt.pre_rez)
+            if opt.use_distance:
+                norms = torch.norm(diff, dim=1, keepdim=True)
+                diff = torch.cat((diff, norms), dim=1)
+            preds = projection_layer(diff)
+            y_score_real.append(preds)
+        y_score_real = torch.flatten(torch.stack(y_score_real))
+        for step, (x_fake, _) in enumerate(fake_loader):
+            if opt.perturb:
+                x_pil = [tform(to_pil(j)) for j in x_fake]
+                x_pil = torch.stack(x_pil)
+                diff = encoder.get_diff(x_fake.to(rank), x_pil.to(rank), rez=opt.pre_rez)
+            else:
+                if 'lpips' in opt.distance_metrics:
+                    diff = encoder.diff(x_fake.to(rank), reconstruct(x_fake.to(rank), ae, seed=opt.seed), use_cat=opt.use_cat, rez=opt.pre_rez)
                 else:
-                    if 'lpips' in opt.distance_metrics:
-                        diff = encoder.diff(x_fake.to(rank), reconstruct(x_fake.to(rank), ae, seed=opt.seed), use_cat=opt.use_cat, rez=opt.pre_rez)
-                    else:
-                        diff = encoder.get_diff(x_fake.to(rank), reconstruct(x_fake.to(rank), ae, seed=opt.seed), use_cat=opt.use_cat, rez=opt.pre_rez)
-                if opt.use_distance:
-                    norms = torch.norm(diff, dim=1, keepdim=True)
-                    diff = torch.cat((diff, norms), dim=1)
-                preds = projection_layer(diff)
-                y_score_fake.append(preds)
-            y_score_fake = torch.flatten(torch.stack(y_score_fake))
-            y_score = y_score_real.tolist() + y_score_fake.tolist()
-            y_true = [0] * len(y_score_real) + [1] * len(y_score_fake)
-            ap = average_precision_score(y_true=y_true, y_score=y_score)
-            tpr5fpr = tpr_at_max_fpr(y_true=y_true, y_score=y_score, max_fpr=0.05)
-            return ap, tpr5fpr
-            #print('Validation Statistics at {str(epoch)}, process {str(rank)}')
-            #print('Validation AP: ', ap)
-            #print('Validation tpr@5fpr: ', tpr5fpr)
-    
+                    diff = encoder.get_diff(x_fake.to(rank), reconstruct(x_fake.to(rank), ae, seed=opt.seed), use_cat=opt.use_cat, rez=opt.pre_rez)
+            if opt.use_distance:
+                norms = torch.norm(diff, dim=1, keepdim=True)
+                diff = torch.cat((diff, norms), dim=1)
+            preds = projection_layer(diff)
+            y_score_fake.append(preds)
+        y_score_fake = torch.flatten(torch.stack(y_score_fake))
+        y_score = y_score_real.tolist() + y_score_fake.tolist()
+        y_true = [0] * len(y_score_real) + [1] * len(y_score_fake)
+        ap = average_precision_score(y_true=y_true, y_score=y_score)
+        tpr5fpr = tpr_at_max_fpr(y_true=y_true, y_score=y_score, max_fpr=0.05)
+        return ap, tpr5fpr
 
-def train(rank, opt, train_loaders, val_loaders=None):
+
+def train(rank, opt, train_loaders, val_loader=None):
     bce_loss = nn.BCELoss()
     to_pil = transforms.ToPILImage()
     real_loader = train_loaders[0]
@@ -92,7 +90,7 @@ def train(rank, opt, train_loaders, val_loaders=None):
     optimizer = torch.optim.AdamW(projection_layer.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999), weight_decay=opt.weight_decay)
     print(projection_layer)
     if rank==0:
-        best_ap, best_tpr5fpr = validate(rank, opt, val_loaders, ae, encoder, projection_layer, epoch = -1, tform=tform) 
+        best_ap, best_tpr5fpr = validate(rank, opt, val_loader, ae, encoder, projection_layer, epoch = -1, tform=tform) 
         print('AP: ', best_ap)
         print('TPR5FPR: ', best_tpr5fpr)
     dist.barrier()
@@ -132,7 +130,7 @@ def train(rank, opt, train_loaders, val_loaders=None):
             if step%10 == 0:
                 print(f"Epoch {eidx}/{step}: {loss}")
                 if rank == 0:
-                    ap, tpr5fpr = validate(rank, opt, val_loaders, ae, encoder, projection_layer, epoch = -1, tform=tform)
+                    ap, tpr5fpr = validate(rank, opt, val_loader, ae, encoder, projection_layer, epoch = -1, tform=tform)
                     print('AP: ' ,ap)
                     print('TPR5FPR: ' ,tpr5fpr)
                 dist.barrier()
@@ -162,13 +160,16 @@ def main(rank, world_size):
     real_loader = prepare(dataset=ds_real, rank=rank, world_size=opt.world_size, batch_size=opt.batch_size, pin_memory=False, num_workers=0)
     fake_loader = prepare(dataset=ds_fake, rank=rank, world_size=opt.world_size, batch_size=opt.batch_size, pin_memory=False, num_workers=0)
     if rank == 0:
-        vs = [ImageFolder(paths=opt.real_val, amount=opt.val_amount, final_rez=opt.final_rez), ImageFolder(paths=opt.fake_val, amount=opt.val_amount, final_rez=opt.final_rez)]
-        vs_normal = [ImageFolder(paths=opt.real_val_normal, amount=opt.val_amount, final_rez=opt.final_rez), ImageFolder(paths=opt.fake_val_normal, amount=opt.val_amount, final_rez=opt.final_rez)]
-        val_loaders = ([prepare(dataset=vs[0], rank=rank, world_size=opt.world_size, batch_size=opt.batch_size, pin_memory=False, num_workers=0, isVal=True), prepare(dataset=vs[1], rank=rank, world_size=opt.world_size, batch_size=opt.batch_size, pin_memory=False, num_workers=0, isVal=True)], [prepare(dataset=vs_normal[0], rank=rank, world_size=opt.world_size, batch_size=opt.batch_size, pin_memory=False, num_workers=0, isVal=True), prepare(dataset=vs_normal[1], rank=rank, world_size=opt.world_size, batch_size=opt.batch_size, pin_memory=False, num_workers=0, isVal=True)]
-            ) 
+        vs = [ImageFolder(paths=opt.real_val, amount=opt.val_amount, final_rez=opt.final_rez), 
+                ImageFolder(paths=opt.fake_val, amount=opt.val_amount, final_rez=opt.final_rez)]
+
+        val_loader =[prepare(dataset=vs[0], rank=rank, world_size=opt.world_size, batch_size=opt.batch_size, pin_memory=False, num_workers=0, isVal=True),
+                     prepare(dataset=vs[1], rank=rank, world_size=opt.world_size, batch_size=opt.batch_size, pin_memory=False, num_workers=0, isVal=True)]
+
+             
     else:
-        val_loaders = [None, None, None, None] #Hack fix later
-    train(rank=rank, opt = opt, train_loaders = [real_loader, fake_loader], val_loaders = val_loaders)
+        val_loader = None #Hack fix later
+    train(rank=rank, opt = opt, train_loaders = [real_loader, fake_loader], val_loader = val_loader)
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -178,19 +179,12 @@ def parse_args():
         type=Path,
         default=Path("/nobackup3/anirudh/datasets/laion_generated_images/1_fake"),
         )
-    parser.add_argument("--real-val", type=Path, default=Path("/nobackup3/anirudh/aeroblade/data/inference/real_val"))
-    parser.add_argument("--real-val-normal", type=Path, default=Path("/nobackup3/anirudh/aeroblade/data/raw/real/00000"))
+    parser.add_argument("--real-val", type=Path, default=Path("/nobackup/anirudh/edit_repo/aeroblade/data/inference/real_val"))
     parser.add_argument(
         "--fake-val",
         type=Path,
-        default=Path("/nobackup3/anirudh/aeroblade/data/inference/gen_val"),
+        default=Path("/nobackup/anirudh/edit_repo/aeroblade/data/inference/gen_val"),
         )
-    parser.add_argument(
-        "--fake-val-normal",
-        type=Path,
-        default=Path("/nobackup3/anirudh/aeroblade/data/raw/generated/runwayml-stable-diffusion-v1-5-ViT-L-14-openai"),
-        )
-
     parser.add_argument("--amount", type=int)
     parser.add_argument(
         "--repo-ids",

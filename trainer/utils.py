@@ -1,9 +1,9 @@
 import os
 import random
-os.chdir('/nobackup3/anirudh/aeroblade/src')
-
+import sys
+sys.path.append('/nobackup/anirudh/edit_repo/aeroblade_mod/src')
+sys.path.append('/nobackup/anirudh/edit_repo/aeroblade_mod/trainer')
 from aeroblade.distances import LPIPS,CLIP
-os.chdir('/nobackup3/anirudh/aeroblade/trainer')
 from augmenter import Augmenter
 from PIL import Image
 import torch
