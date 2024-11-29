@@ -202,7 +202,7 @@
 					</center>
 				</td>
 		
-		<p align="center"">
+		<p align="left"">
     <a href="https://arxiv.org/abs/2401.17879">AEROBLADE</a> is a method specific to detecting images from latent diffusion models which works as follows:
     (i) Select a Latent Diffusion model of interest (e.g., Stable Diffusion),
     (ii) Attempt to find the closest latent by using the encoder, and pass that latent through the decoder to obtain the reconstruction, and
@@ -210,18 +210,25 @@
     However, this approach only works in simple lab settings where the fake images have not undergone any kind of post-processing. Intuitively, the post-processed images did not directly come from a latent, therefore the reconstruction error increases. This can be seen in the above figure, where in the left, the AEROBLADE is able to separate the real and fake distributions,  however once post-processing is applied, the distributions are not separable. However, it is important to note that the distance of real images from their reconstructions remains similar, only the distance of the fake images from their reconstructions increases further supporting the hypothesis presented earlier. We attempt to fix some of these problems.
 </p>
 		
-		<table align="center" width="800px">
-		    <br>
-		    <tr>
-		        <center>
-		            <span style="font-size: 28px;">
-		                <a href="PLACEHOLDER_SLIDES_URL">[Slides]</a>
-		            </span>
-		        </center>
-		    </tr>
-		</table>
 	<hr>
 
+	<hr>
+		<center><h1>Choice of Distance Metric</h1></center>
+		
+		
+		
+		<p align="left"">
+    The current hypothesis is that there exists no latent that can accurately reconstruct the post-processed image. Based on that hypothesis, we first investigate whether we can find a distance metric that is invariant to these post-processing operations. That way, we can simply replace LPIPS with this new metric and improve the existing detector. For our metric, we use the representations of the <a href="https://arxiv.org/abs/2103.00020">CLIP</a> Vision Transformer. Given the vast number of images seen by CLIP, it is reasonable to expect invariance to post-processing operations. We explore 2 variants which we illustrate below,in our first variant on the left, we calculate the euclidean distance between the class tokens, and in the variant on the right, we calculate the token-wise distance and average them. 
+</p>
+		<td width=260px>
+					<center>
+						<img class="round" style="width:800px; height:400px" src="./resources/New_dist.png"/>
+					</center>
+				</td>
+		<p align="left"">
+			We now attempt to get a layer where we can 
+		</p>
+	<hr>
 
 	<center><h1>Code</h1></center>
 
