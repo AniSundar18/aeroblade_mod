@@ -201,11 +201,11 @@
 		</p>
 		
 		<p align="center"">
-    <a href="https://arxiv.org/abs/2401.17879">AEROBLADE</a> is a method specific to detecting images from latent diffusion models which works as follows:<br>
-    (i) Select a Latent Diffusion model of interest (e.g., Stable Diffusion),<br>
-    (ii) Attempt to find the closest latent by using the encoder, and pass that latent through the decoder to obtain the reconstruction, and<br>
+    <a href="https://arxiv.org/abs/2401.17879">AEROBLADE</a> is a method specific to detecting images from latent diffusion models which works as follows:
+    (i) Select a Latent Diffusion model of interest (e.g., Stable Diffusion),
+    (ii) Attempt to find the closest latent by using the encoder, and pass that latent through the decoder to obtain the reconstruction, and
     (iii) Measure the distance between the original image and the reconstruction, based on which a decision can be made.<br><br>
-    However, this approach only works in simple lab settings where the fake images have not undergone any kind of post-processing.
+    However, this approach only works in simple lab settings where the fake images have not undergone any kind of post-processing. Intuitively, the post-processed images did not directly come from a latent, therefore the reconstruction error increases. We demonstrate this experimentally,
 </p>
 		
 		<table align="center" width="800px">
