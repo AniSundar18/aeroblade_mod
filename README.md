@@ -1,32 +1,11 @@
-# [CVPR2024] AEROBLADE: Training-Free Detection of Latent Diffusion Images Using Autoencoder Reconstruction Error
-[Jonas Ricker](https://jonasricker.com), [Denis Lukovnikov](https://informatik.rub.de/ml/people/lukovnikov/), [Asja Fischer](https://informatik.rub.de/fischer/)    
-IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2024
+# Enhancing the Robustness of AEROBLADE Against Post-Processing Techniques
 
-<p align="center">
-<img src="media/header.png" width="70%" alt="header"> 
-</p>
 
-<p align="right">
-<sup><sub><a href="https://twitter.com/casafant">Why the elephant?</a></sub></sup>
-</p>
+## Overview
+Most of the codebase is borrowed from [AEROBLADE](https://github.com/jonasricker/aeroblade). The main objective of this project is to improve the robustness of AEROBLADE to post-processing via training. 
 
 ## Setup
-Create a virtual environment and run
-```
-pip install -r requirements.txt
-pip install -e .
-```
-(tested with Python 3.10).
-
-## Quickstart
-If you simply want to use AEROBLADE for detection, run
-```
-python scripts/run_aeroblade.py --files-or-dirs path/to/img.png path/to/dir
-```
-Calling the script without any arguments will use the images in `example_images`.
-By default, it computes the reconstructions using the AEs from Stable Diffusion 1, Stable Diffusion 2, and Kandinsky 2.1 and measures the distance using the second LPIPS layer, which performed best in our experiments. Use `-h` to learn more about the available options.
-
-The computed distances are printed and saved to `aeroblade_output/distances.csv`. Note that we save the negative distances, which is why the best AE is denoted by `max`.
+The instructions to setup the environment can be found [here](https://github.com/jonasricker/aeroblade). We also use the data provided by the original paper as our training data.
 
 ## Reproducing our Experiments
 Here we provide the commands to reproduce our experimental results.
