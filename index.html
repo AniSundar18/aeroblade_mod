@@ -245,6 +245,36 @@
 
 	<center><h1>Code</h1></center>
 
+
+	<hr>
+		<center><h1>Training a Classifier Improves Robustness</h1></center>
+		
+		
+		
+		<p align="left"">
+			The improvements we obtain by choosing a different distance metric are limited. However, the distance between the image and its reconstruction will be affected by any detail which the autoencoder cannot reconstruct. Identifying and isolating these artifacts is a hard task. It could be more beneficial to not rely on the computed distance, and instead to train a classifier between real and fake images. However, instead of directly training a classifier between real and fake images, we represent the image in a manner similar to <a href="https://arxiv.org/abs/2303.09295">DIRE</a>. We pass both the image and its reconstruction through CLIP as illustrated earlier, subtract the representation and use the representation as the image encoding on top of which we train a classifier. For this stage, we use a simple 2-layer MLP on the difference between the CLS tokens, simple data augmentations such as blur, compression and resizing are added in order to improve the robustness of the detector. We observe big improvements compared to the distance based, training-free methods.
+</p>
+		<td width=260px>
+					<center>
+						<img class="round" style="width:800px; height:400px" src="./resources/MLP_training.png"/>
+					</center>
+				</td>
+		<p align="left"">
+			This method clearly outperforms AEROBLADE, however does it outperform other existing techniques? In order to study this, we also compare against 2 methods representative of different detection paradigms. We choose a simple ResNet-50 baseline which we denote as  <a href="https://github.com/grip-unina/DMimageDetection/tree/main">Corvi</a> and a CLIP-finetuning baseline which we denote as <a href="https://github.com/grip-unina/ClipBased-SyntheticImageDetection/tree/main">Cozzolino</a>. 
+		</p>
+	<td width=260px>
+					<center>
+						<img class="round" style="width:800px; height:400px" src="./resources/Baselines.png"/>
+					</center>
+				</td>
+	<p align="left"">
+	Our method outperforms the CLIP-finetuning based approach, while also requiring lesser data. However, we see that the method is still not close to achieving the performance achieved by a full-network finetuning based method as presented by Corvi.
+		</p>
+	<hr>
+
+
+	<center><h1>Code</h1></center>
+
 	<table align=center width=420px>
 		<center>
 			<tr>
