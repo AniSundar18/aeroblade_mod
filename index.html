@@ -207,7 +207,7 @@
     (i) Select a Latent Diffusion model of interest (e.g., Stable Diffusion),
     (ii) Attempt to find the closest latent by using the encoder, and pass that latent through the decoder to obtain the reconstruction, and
     (iii) Measure the distance between the original image and the reconstruction, based on which a decision can be made.<br><br>
-    However, this approach only works in simple lab settings where the fake images have not undergone any kind of post-processing. Intuitively, the post-processed images did not directly come from a latent, therefore the reconstruction error increases. We demonstrate this experimentally,
+    However, this approach only works in simple lab settings where the fake images have not undergone any kind of post-processing. Intuitively, the post-processed images did not directly come from a latent, therefore the reconstruction error increases. This can be seen in the above figure, where in the left, the AEROBLADE is able to separate the real and fake distributions,  however once post-processing is applied, the distributions are not separable. However, it is important to note that the distance of real images from their reconstructions remains similar, only the distance of the fake images from their reconstructions increases further supporting the hypothesis presented earlier. We attempt to fix some of these problems.
 </p>
 		
 		<table align="center" width="800px">
